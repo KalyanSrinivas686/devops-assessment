@@ -2,35 +2,42 @@ name: Deploy DevOps App
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_REPOSITORY: devops-app
+      ECR_REGISTRY: 988197903609.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+
     steps:
     - name: Checkout
       uses: actions/checkout@v3
 
-    - name: Configure AWS
+    - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Login to ECR
+    - name: Login to Amazon ECR
       uses: aws-actions/amazon-ecr-login@v1
 
     - name: Build Docker Image
-      run: docker build -t devops-app .
-
-    - name: Tag and Push Image
       run: |
-        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-        ECR_URI="$ACCOUNT_ID.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/devops-app:latest"
-        docker tag devops-app:latest $ECR_URI
-        docker push $ECR_URI
+        docker build -t $ECR_REPOSITORY:latest .
+
+    - name: Tag Docker Image
+      run: |
+        docker tag $ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+    - name: Push Docker Image to ECR
+      run: |
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
     - name: Deploy to EC2
       uses: appleboy/ssh-action@master
@@ -39,9 +46,8 @@ jobs:
         username: ${{ secrets.EC2_USER }}
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR_URI="$ACCOUNT_ID.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/devops-app:latest"
-          docker pull $ECR_URI
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest
           docker stop devops-app || true
           docker rm devops-app || true
-          docker run -d -p 80:3000 --name devops-app $ECR_URI
+          docker run -d -p 80:3000 --name devops-app $ECR_REGISTRY/$ECR_REPOSITORY:latest
