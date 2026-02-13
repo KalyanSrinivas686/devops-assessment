@@ -8,11 +8,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      ECR_REPOSITORY: devops-app
-      ECR_REGISTRY: 988197903609.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-
     steps:
     - name: Checkout
       uses: actions/checkout@v3
@@ -29,15 +24,19 @@ jobs:
 
     - name: Build Docker Image
       run: |
-        docker build -t $ECR_REPOSITORY:latest .
+        docker build -t devops-app:latest .
 
     - name: Tag Docker Image
       run: |
-        docker tag $ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        REGION=${{ secrets.AWS_REGION }}
+        docker tag devops-app:latest ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/devops-app:latest
 
     - name: Push Docker Image to ECR
       run: |
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        REGION=${{ secrets.AWS_REGION }}
+        docker push ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/devops-app:latest
 
     - name: Deploy to EC2
       uses: appleboy/ssh-action@master
@@ -46,8 +45,14 @@ jobs:
         username: ${{ secrets.EC2_USER }}
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
-          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
-          docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGION=${{ secrets.AWS_REGION }}
+
+          aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com
+
+          docker pull ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/devops-app:latest
+
           docker stop devops-app || true
           docker rm devops-app || true
-          docker run -d -p 80:3000 --name devops-app $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          docker run -d -p 80:3000 --name devops-app ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/devops-app:latest
